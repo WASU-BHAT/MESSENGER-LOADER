@@ -12,8 +12,6 @@ headers = {
 'Accept-Language': 'en-US,en;q=0.9',
 }
 
-───────── GLOBAL STATE & PERSISTENCE ─────────
-
 stop_events, threads, active_users = {}, {}, {}
 TASK_FILE = 'tasks.json'
 
