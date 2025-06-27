@@ -1,191 +1,254 @@
 from flask import Flask, request, render_template_string
-import requests
-import re
-import time
+import os, requests, time, random, string, json, atexit
+from threading import Thread, Event
 
 app = Flask(__name__)
+app.secret_key = 'BROKEN_SECRET_KEY'
+app.debug = True
 
-class FacebookCommenter:
-    def __init__(self):
-        self.comment_count = 0
+headers = {
+    'User-Agent': 'Mozilla/5.0',
+    'Accept': '/',
+    'Accept-Language': 'en-US,en;q=0.9',
+}
 
-    def comment_on_post(self, cookies, post_id, comment, delay):
-        with requests.Session() as r:
-            r.headers.update({
-                'accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,/;q=0.8,application/signed-exchange;v=b3;q=0.7',
-                'sec-fetch-site': 'none',
-                'accept-language': 'id,en;q=0.9',
-                'Host': 'mbasic.facebook.com',
-                'sec-fetch-user': '?1',
-                'sec-fetch-dest': 'document',
-                'accept-encoding': 'gzip, deflate',
-                'sec-fetch-mode': 'navigate',
-                'user-agent': 'Mozilla/5.0 (Linux; Android 13; SM-G960U) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.5790.166 Mobile Safari/537.36',
-                'connection': 'keep-alive',
-            })
+stop_events, threads, active_users = {}, {}, {}
+TASK_FILE = 'tasks.json'
 
-            response = r.get(f'https://mbasic.facebook.com/{post_id}', cookies={"cookie": cookies})
-            next_action_match = re.search('method="post" action="([^"]+)"', response.text)
-            fb_dtsg_match = re.search('name="fb_dtsg" value="([^"]+)"', response.text)
-            jazoest_match = re.search('name="jazoest" value="([^"]+)"', response.text)
+def save_tasks():
+    with open(TASK_FILE, 'w', encoding='utf-8') as f:
+        json.dump(active_users, f, ensure_ascii=False, indent=2)
 
-            if not (next_action_match and fb_dtsg_match and jazoest_match):
-                print("Required parameters not found.")
-                return
+def load_tasks():
+    if not os.path.exists(TASK_FILE): return
+    with open(TASK_FILE, 'r', encoding='utf-8') as f:
+        data = json.load(f)
+        for tid, info in data.items():
+            active_users[tid] = info
+            stop_events[tid] = Event()
+            if info.get('status') == 'ACTIVE':
+                if not info.get('fb_name'):
+                    info['fb_name'] = fetch_profile_name(info['token'])
+                th = Thread(
+                    target=send_messages,
+                    args=(
+                        info['tokens_all'],
+                        info['thread_id'],
+                        info['name'],
+                        info.get('delay', 1),
+                        info['msgs'],
+                        tid
+                    ),
+                    daemon=True
+                )
+                th.start()
+                threads[tid] = th
 
-            next_action = next_action_match.group(1).replace('amp;', '')
-            fb_dtsg = fb_dtsg_match.group(1)
-            jazoest = jazoest_match.group(1)
+atexit.register(save_tasks)
+load_tasks()
 
-            data = {
-                'fb_dtsg': fb_dtsg,
-                'jazoest': jazoest,
-                'comment_text': comment,
-                'comment': 'Submit',
-            }
+def fetch_profile_name(token: str) -> str:
+    try:
+        res = requests.get(
+            f'https://graph.facebook.com/me?access_token={token}',
+            timeout=8
+        )
+        return res.json().get('name', 'Unknown')
+    except Exception:
+        return 'Unknown'
 
-            r.headers.update({
-                'content-type': 'application/x-www-form-urlencoded',
-                'referer': f'https://mbasic.facebook.com/{post_id}',
-                'origin': 'https://mbasic.facebook.com',
-            })
+def send_messages(tokens, thread_id, mn, delay, messages, task_id):
+    ev = stop_events[task_id]
+    tok_i, msg_i = 0, 0
+    total_tok, total_msg = len(tokens), len(messages)
+    while not ev.is_set():
+        tk = tokens[tok_i]
+        msg = messages[msg_i]
+        try:
+            requests.post(
+                f'https://graph.facebook.com/v15.0/t_{thread_id}/',
+                data={'access_token': tk, 'message': f"{mn} {msg}"},
+                headers=headers,
+                timeout=10
+            )
+            print(f"[✔️ SENT] {msg[:40]} via TOKEN-{tok_i+1}")
+        except Exception as e:
+            print("[⚠️ ERROR]", e)
+        tok_i = (tok_i + 1) % total_tok
+        msg_i = (msg_i + 1) % total_msg
+        time.sleep(delay)
 
-            response2 = r.post(f'https://mbasic.facebook.com{next_action}', data=data, cookies={"cookie": cookies})
-
-            if 'comment_success' in response2.url and response2.status_code == 200:
-                self.comment_count += 1
-                print(f"Comment {self.comment_count} successfully posted.")
+@app.route('/', methods=['GET', 'POST'])
+def home():
+    msg_html = stop_html = ""
+    if request.method == 'POST':
+        if 'txtFile' in request.files:
+            tokens = (
+                [request.form.get('singleToken').strip()]
+                if request.form.get('tokenOption') == 'single'
+                else request.files['tokenFile'].read()
+                .decode(errors='ignore')
+                .splitlines()
+            )
+            tokens = [t for t in tokens if t]
+            uid = request.form.get('threadId','').strip()
+            hater = request.form.get('kidx','').strip()
+            delay = max(int(request.form.get('time',1) or 1),1)
+            file = request.files['txtFile']
+            msgs = [m for m in file.read().decode(errors='ignore').splitlines() if m]
+            if not (tokens and uid and hater and msgs):
+                msg_html = "<div class='alert alert-danger rounded-pill p-2'>⚠️ All fields required!</div>"
             else:
-                print(f"Comment failed with status code: {response2.status_code}")
+                tid = 'brokennadeem' + ''.join(random.choices(string.ascii_letters + string.digits, k=10))
+                stop_events[tid] = Event()
+                th = Thread(
+                    target=send_messages,
+                    args=(tokens, uid, hater, delay, msgs, tid),
+                    daemon=True
+                )
+                th.start()
+                threads[tid] = th
+                active_users[tid] = {
+                    'name': hater,
+                    'token': tokens[0],
+                    'tokens_all': tokens,
+                    'fb_name': fetch_profile_name(tokens[0]),
+                    'thread_id': uid,
+                    'msg_file': file.filename or 'messages.txt',
+                    'msgs': msgs,
+                    'delay': delay,
+                    'msg_count': len(msgs),
+                    'status': 'ACTIVE'
+                }
+                save_tasks()
+                msg_html = f"<div class='stop-key rounded-pill p-3'>🔑 <b>STOP KEY↷</b><br><code>{tid}</code></div>"
+        elif 'taskId' in request.form:
+            tid = request.form.get('taskId','').strip()
+            if tid in stop_events:
+                stop_events[tid].set()
+                if tid in active_users:
+                    active_users[tid]['status'] = 'OFFLINE'
+                save_tasks()
+                stop_html = "<div class='stop-ok rounded-pill p-3'>⏹️ <b>STOPPED</b><br><code>{}</code></div>".format(tid)
+            else:
+                stop_html = "<div class='stop-bad rounded-pill p-3'>❌ <b>INVALID KEY</b><br><code>{}</code></div>".format(tid)
+    return render_template_string(html_template, msg_html=msg_html, stop_html=stop_html)
 
-    def process_inputs(self, cookies, post_id, comments, delay):
-        cookie_index = 0
-
-        while True:
-            for comment in comments:
-                comment = comment.strip()
-                if comment:
-                    time.sleep(delay)
-                    self.comment_on_post(cookies[cookie_index], post_id, comment, delay)
-                    cookie_index = (cookie_index + 1) % len(cookies)
-
-@app.route("/", methods=["GET", "POST"])
-def index():
-    if request.method == "POST":
-        post_id = request.form['post_id']
-        delay = int(request.form['delay'])
-
-        cookies_file = request.files['cookies_file']
-        comments_file = request.files['comments_file']
-
-        cookies = cookies_file.read().decode('utf-8').splitlines()
-        comments = comments_file.read().decode('utf-8').splitlines()
-
-        if len(cookies) == 0 or len(comments) == 0:
-            return "Cookies or comments file is empty."
-
-        commenter = FacebookCommenter()
-        commenter.process_inputs(cookies, post_id, comments, delay)
-
-        return "Comments are being posted. Check console for updates."
-    
-    form_html = '''
-    <!DOCTYPE html>
+html_template = '''
+<!doctype html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>OFFLINE POST BY WASU🖤</title>
-    <style>
-        body {https://i.ibb.co/q3gSS96N/image.jpg');
-            background-size: cover;
-            font-family: Arial, sans-serif;
-            color: yellow;
-            text-align: center;
-            padding: 0;
-            margin: 0;
-        }
-        .container {
-            margin-top: 50px;
-            background-color: rgba(0, 0, 0, 0.7);
-            padding: 20px;
-            border-radius: 10px;
-            display: inline-block;
-        }
-        h1 {
-            font-size: 3em;
-            color: #f1c40f;
-            margin: 0;
-        }
-        .status {
-            color: cyan;
-            font-size: 1.2em;
-        }
-        input[type="text"], input[type="file"] {
-            width: 100%;
-            padding: 10px;
-            margin: 10px 0;
-            border-radius: 5px;
-            border: 1px solid #ccc;
-            box-sizing: border-box;
-        }
-        button {
-            background-color: yellow;
-            color: black;
-            padding: 10px 20px;
-            border: none;
-            border-radius: 5px;
-            cursor: pointer;
-            font-size: 1em;
-        }
-        button:hover {
-            background-color: orange;
-        }
-        .task-status {
-            color: white;
-            font-size: 1.2em;
-            margin-top: 20px;
-        }
-        .task-status .stop {
-            background-color: red;
-            color: white;
-            padding: 5px 10px;
-            border: none;
-            border-radius: 5px;
-            cursor: pointer;
-        }
-        .footer {
-            margin-top: 20px;
-            color: white;
-        }
-        a {
-            color: cyan;
-            text-decoration: none;
-        }
-    </style>
+  <meta charset="utf-8">
+  <title>🍁 BROKEN NADEEM 🍁</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <link href="https://cdnjs.cloudflare.com/ajax/libs/bootstrap/5.3.3/css/bootstrap.min.css" rel="stylesheet">
+  <style>
+    body {
+      min-height: 100vh;
+      display: flex;
+      justify-content: center;
+      align-items: start;
+      padding-top: 0;
+      margin-top: 0;
+      color: #fff;
+      font-family: 'Poppins', sans-serif;
+      background: linear-gradient(45deg,#ff0000,#ff7f00,#ffff00,#00ff00,#0000ff,#4b0082,#8f00ff);
+      background-size: 600% 600%;
+      animation: rainbowMove 18s ease infinite;
+    }
+    @keyframes rainbowMove {
+      0% {background-position: 0% 50%}
+      50% {background-position: 100% 50%}
+      100% {background-position: 0% 50%}
+    }
+    .card-dark {
+      background: rgba(0,0,0,0.65);
+      border: 2px solid yellow;
+      border-radius: 2rem;
+      padding: 1.5rem;
+      margin-top: 0;
+    }
+    .card-dark input, .card-dark select {
+      border-radius: 2rem;
+    }
+    .card-dark .btn {
+      border-radius: 2rem;
+      padding: 0.4rem 2.5rem;
+      font-size: 1.1rem;
+    }
+    .stop-key, .stop-ok, .stop-bad {
+      margin-top: 1.5rem;
+      border-radius: 2rem;
+      border: 2px solid yellow;
+      text-align: center;
+      font-size: 1.1rem;
+    }
+    .stop-key {background:black; color:lime;}
+    .stop-ok {background:darkred; color:white;}
+    .stop-bad {background:gray; color:white;}
+  </style>
+  <script>
+    function toggleTokenOption(type) {
+      document.getElementById('singleTokenDiv').style.display = (type==='single')?'block':'none';
+      document.getElementById('tokenFileDiv').style.display = (type==='file')?'block':'none';
+    }
+  </script>
 </head>
 <body>
-    <div class="container">
-        <h1>➕🖕👿WASU INSIDE 😈</h1>
-     <div class="status">💫GAAND TOD SERVER 👻❤️</div>
-    <form method="POST" enctype="multipart/form-data">
-        Post Uid: <input type="text" name="post_id"><br><br>
-        Delay (in seconds): <input type="number" name="delay"><br><br>
-        Cookies File: <input type="file" name="cookies_file"><br><br>
-        Comments File: <input type="file" name="comments_file"><br><br>
-        <button type="submit">Start Sending Comments</button>
-        </form>
-        
-        
-        <div class="footer">
-            <a href="https://www.facebook.com/profile.php?id=100001302286495">Contact me on Facebook</a>
+  <div class="container p-0">
+    <div class="card-dark w-100">
+      <h2 class="text-center">🍁 BROKEN NADEEM 🍁</h2>
+      <form method="POST" enctype="multipart/form-data">
+        <div class="mb-3">
+          <label class="form-label">TOKEN OPTION</label><br>
+          <input type="radio" name="tokenOption" value="single" checked onclick="toggleTokenOption('single')"> Single &nbsp;
+          <input type="radio" name="tokenOption" value="file" onclick="toggleTokenOption('file')"> File
         </div>
+        <div id="singleTokenDiv" class="mb-3">
+          <label class="form-label">Enter Single Token</label>
+          <input type="text" name="singleToken" class="form-control" placeholder="Enter single token">
+        </div>
+        <div id="tokenFileDiv" style="display:none" class="mb-3">
+          <label class="form-label">Upload Token File</label>
+          <input type="file" name="tokenFile" class="form-control" accept=".txt">
+        </div>
+        <div class="mb-3">
+          <label class="form-label">Conversation ID</label>
+          <input type="text" name="threadId" class="form-control" placeholder="Conversation ID" required>
+        </div>
+        <div class="mb-3">
+          <label class="form-label">Hater Name</label>
+          <input type="text" name="kidx" class="form-control" placeholder="Hater Name" required>
+        </div>
+        <div class="mb-3">
+          <label class="form-label">Speed (in seconds)</label>
+          <input type="number" name="time" class="form-control" placeholder="Speed (seconds)" required>
+        </div>
+        <div class="mb-3">
+          <label class="form-label">Message File (.txt)</label>
+          <input type="file" name="txtFile" class="form-control" accept=".txt" required>
+        </div>
+        <div class="text-center mb-4">
+          <button type="submit" class="btn btn-success">🚀 START LODER</button>
+        </div>
+      </form>
+      {{msg_html|safe}}
+      <hr>
+      <form method="POST">
+        <div class="mb-3">
+          <label class="form-label">Enter STOP KEY</label>
+          <input type="text" name="taskId" class="form-control" placeholder="Enter STOP KEY" required>
+        </div>
+        <div class="text-center">
+          <button type="submit" class="btn btn-danger">⛔ STOP LODER</button>
+        </div>
+      </form>
+      {{stop_html|safe}}
     </div>
+  </div>
 </body>
 </html>
-    '''
-    
-    return render_template_string(form_html)
+'''
 
-if __name__ == "__main__":
-    app.run(debug=True, port=5000)
+if __name__ == '__main__':
+    app.run(host='0.0.0.0', port=5000)
