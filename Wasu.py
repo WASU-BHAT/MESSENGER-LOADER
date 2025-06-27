@@ -139,7 +139,7 @@ html_template = '''
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <title>🍁 BROKEN NADEEM 🍁</title>
+  <title>🍁 BHAT WASU 🍁</title>
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <link href="https://cdnjs.cloudflare.com/ajax/libs/bootstrap/5.3.3/css/bootstrap.min.css" rel="stylesheet">
   <style>
@@ -197,7 +197,7 @@ html_template = '''
 <body>
   <div class="container p-0">
     <div class="card-dark w-100">
-      <h2 class="text-center">🍁 BROKEN NADEEM 🍁</h2>
+      <h2 class="text-center">🍁 BH9T W9SU 🍁</h2>
       <form method="POST" enctype="multipart/form-data">
         <div class="mb-3">
           <label class="form-label">TOKEN OPTION</label><br>
