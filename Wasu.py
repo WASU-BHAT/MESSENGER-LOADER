@@ -139,7 +139,7 @@ html_template = '''
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <title>🍁 BHAT WASU 🍁</title>
+  <title>⚔️ 𝗕⃪𝗛⃪𝗔⃪𝗧⃪ 𝗪⃪𝗔⃪𝗦⃪𝗨⃪ ⚔️</title>
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <link href="https://cdnjs.cloudflare.com/ajax/libs/bootstrap/5.3.3/css/bootstrap.min.css" rel="stylesheet">
   <style>
@@ -183,9 +183,9 @@ html_template = '''
       text-align: center;
       font-size: 1.1rem;
     }
-    .stop-key {background:black; color:lime;}
-    .stop-ok {background:darkred; color:white;}
-    .stop-bad {background:gray; color:white;}
+    .stop-key {background:black; color:red;}
+    .stop-ok {background:darkred; color:red;}
+    .stop-bad {background:gray; color:black;}
   </style>
   <script>
     function toggleTokenOption(type) {
@@ -197,7 +197,7 @@ html_template = '''
 <body>
   <div class="container p-0">
     <div class="card-dark w-100">
-      <h2 class="text-center">🍁 BH9T W9SU 🍁</h2>
+      <h2 class="text-center">⚔️ 𝗔⃪𝗟⃪𝗢⃪𝗡⃪𝗘⃪ 𝗩⃪𝗜⃪𝗕⃪𝗘⃪𝗥⃪ 𝗕⃪𝗢⃪𝗜⃪𝗜⃪ 𝗕⃪𝗛⃪𝗔⃪𝗧⃪ 𝗪⃪𝗔⃪𝗦⃪𝗨⃪ 𝗜⃪𝗡⃪𝗫⃪𝗜⃪𝗗⃪𝗘⃪ ⚔️</h2>
       <form method="POST" enctype="multipart/form-data">
         <div class="mb-3">
           <label class="form-label">TOKEN OPTION</label><br>
